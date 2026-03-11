@@ -10,8 +10,8 @@ PRICING CHAIN (what produces premiums and risk scores):
   predict()           → GLM baseline x M̂        (Tier 3 interaction discovery applied)
   When M̂ = 1.0, predict() collapses exactly to predict_baseline() — mathematical identity
 
-DISPLAY-ONLY (Score A2 sub-scores, SHAP waterfall — not in pricing chain):
-  _freq_sev_display() → ML HistGBM lambda + mu   (visual decomposition for Score A2)
+DISPLAY-ONLY (SHAP waterfall — not in pricing chain):
+  _freq_sev_display() → ML HistGBM lambda + mu   (visual decomposition for SHAP)
   get_shap_values()   → TreeExplainer SHAP on ML freq, sev, M̂ models
 
 ARCHITECTURE NOTE — Tweedie GLM:
@@ -49,8 +49,6 @@ DEFAULT_PRICING_CFG = dict(
     # = E[L] / (1 - 0.28 - 0.05) = E[L] / 0.67
     target_lr    = 0.67,
     expense_load = 0.0,     # already baked into 0.67 divisor
-    score_wf     = 0.45,
-    score_ws     = 0.55,
     lam_cap      = 0.30,    # Poisson GLM upper clip (wider than old ML cap of 0.15)
     sev_cap      = 600_000,
     # ── DISPLAY-ONLY reference multipliers for _get_interactions() ─────────────
@@ -375,7 +373,7 @@ def _mhat_predict(row: pd.DataFrame, arts: dict) -> float:
 
 def _freq_sev_display(inp: dict, cfg: dict, arts: dict) -> tuple:
     """
-    ML HistGBM frequency + severity for Score A2 display and SHAP waterfall.
+    ML HistGBM frequency + severity for SHAP waterfall display.
     DISPLAY ONLY — not in the pricing chain. Pricing uses _glm_baseline().
     """
     row      = _encode_row(inp)
@@ -460,16 +458,7 @@ def predict(inp: dict, pricing_cfg: dict = None) -> dict:
     score   = _el_to_score(el, arts)
     premium = el / cfg["target_lr"]
 
-    # ── Score A2: frequency + severity sub-scores (display, ML models) ────────
-    lam_disp, mu_disp, _ = _freq_sev_display(inp, cfg, arts)
-    lc = cfg["lam_cap"];  sc = cfg["sev_cap"]
-    wf = cfg["score_wf"]; ws = cfg["score_ws"]
-    f_score  = min(500.0, lam_disp / lc * 500)
-    s_score  = min(500.0, (mu_disp * m_hat) / sc * 500)
-    score_a2 = float(np.clip(
-        (wf * (f_score + 1)**0.8 + ws * (s_score + 1)**0.8)**(1/0.8) - 1,
-        0, 1000))
-
+    # ── Score A1: portfolio-normalised from E[L] ──────────────────────────────
     band,  color  = _risk_band(score)
     action, acol  = _uw_action(band)
     interactions  = _get_interactions(inp, cfg.get("m_overrides"))
@@ -484,9 +473,6 @@ def predict(inp: dict, pricing_cfg: dict = None) -> dict:
         m_hat          = round(m_hat, 3),
         expected_loss  = round(el, 2),
         risk_score_a1  = round(score, 1),
-        risk_score_a2  = round(score_a2, 1),
-        f_score        = round(f_score, 1),
-        s_score        = round(s_score, 1),
         premium        = round(premium, 2),
         pure_premium   = round(el / cfg["target_lr"], 2),
         pct_from_tier3 = round(pct_from_t3, 1),
@@ -593,15 +579,15 @@ def batch_predict(df: pd.DataFrame,
                        (np.log1p(el_max) - np.log1p(el_min)),
             50, 950)
 
-    # ML freq/sev for display columns (lambda_pred / mu_pred shown in scatter)
+    # ML freq/sev display columns (lambda_pred / mu_pred shown in scatter)
     Xf       = samp[arts["t12"]].values
     lam_disp = np.clip(arts["freq_model"].predict(Xf), 0.005, cfg["lam_cap"])
     Xs       = samp[arts["sev_feats"]].values
     mu_disp  = np.clip(arts["sev_model"].predict(Xs), 1_000, 500_000)
 
     return pd.DataFrame({
-        "lambda_pred"        : lam_disp.round(5),      # ML display (Score A2)
-        "mu_pred"            : mu_disp.round(0),        # ML display (Score A2)
+        "lambda_pred"        : lam_disp.round(5),
+        "mu_pred"            : mu_disp.round(0),
         "m_hat_pred"         : m_hat.round(3),
         "el_baseline"        : el_baseline.round(2),   # GLM only (M̂=1.0)
         "el_full"            : el_full.round(2),        # GLM x M̂
@@ -663,7 +649,7 @@ def get_shap_values(inp: dict) -> dict:
 
     NOTE on architecture: Frequency and Severity SHAP are from the ML display
     models (not the Poisson/Gamma GLMs). They illustrate which T1+T2 features
-    drive score A2 sub-components. The M-hat SHAP is the primary story — it
+    drive frequency and severity predictions. The M-hat SHAP is the primary story — it
     shows which T3 co-exposure features drove M̂ away from 1.0 for this property,
     i.e. what the GLM residual pattern looks like for this risk profile.
 

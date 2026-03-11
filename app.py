@@ -438,10 +438,12 @@ def mc(label, value, color="#1D4ED8", sub=None):
             f"<div class='metric-lbl'>{label}</div>{sub_html}</div>")
 
 def mhat_card(value_str, pct_str):
-    return (f"<div class='mhat-card'>"
+    return (f"<div class='mhat-card' style='height:100%;min-height:180px;"
+            f"display:flex;flex-direction:column;justify-content:center;align-items:center'>"
             f"<div class='mhat-val'>{value_str}</div>"
             f"<div class='mhat-lbl'>Tier 3 Interaction M&#x0302;</div>"
-            f"<div style='color:#92400E;font-size:.78rem;margin-top:6px;font-weight:600'>"
+            f"<div style='color:#92400E;font-size:.78rem;margin-top:6px;font-weight:600;"
+            f"text-align:center'>"
             f"{pct_str} of premium from interactions</div></div>")
 
 
@@ -522,19 +524,13 @@ with st.sidebar:
         )
 
     with st.expander("📊 Scoring Parameters", expanded=False):
-        cfg_score_wf = st.slider(
-            "Frequency Weight (w_f)", 0.30, 0.70, 0.45, 0.05,
-            help="Weight for frequency in the composite A2 score.",
-        )
-        cfg_score_ws = round(1.0 - cfg_score_wf, 2)
-        st.caption(f"Severity weight (w_s) auto-set to {cfg_score_ws:.2f}")
         cfg_lam_cap = st.slider(
             "Lambda Cap (max annual freq)", 0.08, 0.35, 0.30, 0.01,
             help="Maximum annual claim probability cap. Poisson GLM upper clip.",
         )
         cfg_sev_cap = st.slider(
             "Severity Scale Cap ($k)", 300, 1000, 600, 50,
-            help="Severity normalisation ceiling for Score A2.",
+            help="Severity normalisation ceiling.",
         ) * 1000
 
     st.markdown(
@@ -576,8 +572,6 @@ with st.sidebar:
 PRICING_CFG = dict(
     target_lr    = cfg_target_lr,
     expense_load = cfg_expense_load,
-    score_wf     = cfg_score_wf,
-    score_ws     = cfg_score_ws,
     lam_cap      = cfg_lam_cap,
     sev_cap      = cfg_sev_cap,
     m_overrides  = dict(
@@ -1269,34 +1263,37 @@ with TABS[0]:
             </div>""", unsafe_allow_html=True)
 
         with m_col:
-            r1c1, r1c2, r1c3 = st.columns(3)
             pct_from_tier3 = (res["m_hat"] - 1.0) / res["m_hat"] * 100
-            with r1c1:
-                st.markdown(mc("Annual Claim Probability", f"{res['lambda_pred']:.2%}",
-                               TIER_COLORS["lambda"], sub="Poisson GLM — T1+T2 features"), unsafe_allow_html=True)
-            with r1c2:
-                st.markdown(mc("Expected Claim Size", f"${res['mu_pred']:,.0f}",
-                               TIER_COLORS["mu"], sub="Gamma GLM — T1+T2 features"), unsafe_allow_html=True)
-            with r1c3:
-                st.markdown(mhat_card(f"×{res['m_hat']:.3f}", f"~{pct_from_tier3:.0f}%"),
-                            unsafe_allow_html=True)
-            st.markdown("<br>", unsafe_allow_html=True)
-            r2c1, r2c2, r2c3 = st.columns(3)
-            with r2c1:
-                st.markdown(mc("Expected Annual Loss", f"${res['expected_loss']:,.0f}",
-                               TIER_COLORS["el"], sub="E[L] = λ × μ × M̂"), unsafe_allow_html=True)
-            with r2c2:
-                st.markdown(mc("Indicated Annual Premium", f"${res['premium']:,.0f}",
-                               TIER_COLORS["premium"],
-                               sub=f"LR target: {int(PRICING_CFG['target_lr']*100)}%"),
-                            unsafe_allow_html=True)
-            with r2c3:
-                st.markdown(mc("Risk Score — Component View", f"{res['risk_score_a2']:.0f}",
-                               "#b87898", sub="Freq + Severity weighted"), unsafe_allow_html=True)
-
             lr  = PRICING_CFG["target_lr"]
             exp_load = PRICING_CFG["expense_load"]
-            # predictor.py: premium = el / target_lr (expense baked into divisor)
+
+            # ── Unified 3-column card grid (no gaps, no orphaned tiles) ──────────
+            # Left 2 cols: 2×2 grid of metric cards | Right col: tall M̂ card
+            left_col, right_col = st.columns([2, 1])
+
+            with left_col:
+                inner_l, inner_r = st.columns(2)
+                with inner_l:
+                    st.markdown(mc("Annual Claim Probability", f"{res['lambda_pred']:.2%}",
+                                   TIER_COLORS["lambda"], sub="Poisson GLM — T1+T2 features"), unsafe_allow_html=True)
+                with inner_r:
+                    st.markdown(mc("Expected Claim Size", f"${res['mu_pred']:,.0f}",
+                                   TIER_COLORS["mu"], sub="Gamma GLM — T1+T2 features"), unsafe_allow_html=True)
+                st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+                inner_l2, inner_r2 = st.columns(2)
+                with inner_l2:
+                    st.markdown(mc("Expected Annual Loss", f"${res['expected_loss']:,.0f}",
+                                   TIER_COLORS["el"], sub="E[L] = λ × μ × M̂"), unsafe_allow_html=True)
+                with inner_r2:
+                    st.markdown(mc("Indicated Annual Premium", f"${res['premium']:,.0f}",
+                                   TIER_COLORS["premium"],
+                                   sub=f"LR target: {int(lr*100)}%"), unsafe_allow_html=True)
+
+            with right_col:
+                st.markdown(mhat_card(f"×{res['m_hat']:.3f}", f"~{pct_from_tier3:.0f}%"),
+                            unsafe_allow_html=True)
+
+            # ── Formula strip ────────────────────────────────────────────────────
             st.markdown(f"""<div class='formula-t3'>
 <b>E[L] = λ × μ × M&#x0302;</b><br>
 &nbsp;&nbsp;&nbsp;&nbsp; =
@@ -3641,8 +3638,7 @@ Payback         = ${roi_impl_cost}K / (${annual_loss_saving/1e6:.2f}M / 12)
             "M_true"             : "Interaction Multiplier (M̂)",
             "expected_loss_true" : "Expected Annual Loss ($)",
             "indicated_premium"  : "Indicated Premium ($)",
-            "risk_score_true"    : "Risk Score A1 (0–1000)",
-            "risk_score_a2"      : "Risk Score A2 — Component View",
+            "risk_score_true"    : "Risk Score (0–1000)",
             "home_value"         : "Dwelling Value / RCV ($)",
             "coverage_amount"    : "Coverage Amount ($)",
             "home_age"           : "Home Age (years)",
@@ -4744,8 +4740,7 @@ with TABS[5]:
   E[L]ᵢ  =  <span style='color:{TIER_COLORS["lambda"]}'>λᵢ</span>  ×  <span style='color:{TIER_COLORS["mu"]}'>μᵢ</span>  ×  <span style='color:{TIER_COLORS["tier3"]}'>M̂ᵢ</span><br><br>
 
 <b style='color:{TIER_COLORS["premium"]}'>STAGE 6 — Risk Score &amp; Premium</b><br>
-  Score A1  =  50 + 900 × percentile_rank(E[L]ᵢ)   ← portfolio-relative<br>
-  Score A2  =  (0.45 × F_score⁰·⁸ + 0.55 × S_score⁰·⁸)^(1/0.8)   ← absolute<br>
+  Score  =  50 + 900 × percentile_rank(E[L]ᵢ)   ← portfolio-relative<br>
   Premium   =  E[L]ᵢ / 0.67   ← (1 − expense_ratio 0.28 − profit_margin 0.05) = 0.67 divisor
 </div>""", unsafe_allow_html=True)
 
@@ -5122,38 +5117,18 @@ with TABS[5]:
         st.markdown("---")
 
         # Score formula
-        st.markdown("### Risk Score Formulas — Approach 1 vs Approach 2")
-        col_a1, col_a2 = st.columns(2)
-        with col_a1:
-            st.markdown(f"""<div style='background:#F8FAFC;border:1px solid
+        st.markdown("### Risk Score Formula")
+        st.markdown(f"""<div style='background:#F8FAFC;border:1px solid
               {TIER_COLORS["tier1"]}40;border-radius:12px;padding:18px'>
               <div style='font-size:.8rem;font-weight:700;color:{TIER_COLORS["tier1"]};
                 text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px'>
-                Score A1 — Portfolio Normalised</div>
+                Risk Score — Portfolio Normalised</div>
               <div class='formula-t3' style='font-size:.78rem'>
-Score A1ᵢ = 50 + 900 × [E[L]ᵢ − E[L]_min] / [E[L]_max − E[L]_min]
+Score(i) = 50 + 900 × [E[L]ᵢ − E[L]_min] / [E[L]_max − E[L]_min]
 
 Range: 50 (safest) → 950 (most dangerous)
-Use: Pricing, reserving, reinsurance
-Strength: Direct actuarial trail — filing safe
-Weakness: Relative to current book (shifts if book changes)
-              </div>
-            </div>""", unsafe_allow_html=True)
-        with col_a2:
-            st.markdown(f"""<div style='background:#F8FAFC;border:1px solid
-              {TIER_COLORS["tier2"]}40;border-radius:12px;padding:18px'>
-              <div style='font-size:.8rem;font-weight:700;color:{TIER_COLORS["tier2"]};
-                text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px'>
-                Score A2 — Frequency + Severity Components</div>
-              <div class='formula-t3' style='font-size:.78rem'>
-F_score = min(500, λᵢ / 0.40 × 500)
-S_score = min(500, μᵢ × M̂ᵢ / $600K × 500)
-A2 = (w_f × F_score^α + w_s × S_score^α)^(1/α)
-
-w_f = 0.45, w_s = 0.55, α = 0.8 (sub-additive)
-Use: Underwriting triage, agent-facing tools
-Strength: Absolute — stable across books
-Weakness: Implied E[L] only (approximate)
+Use: Pricing, reserving, reinsurance, underwriting triage
+Strength: Direct actuarial trail — filing safe · portfolio-relative
               </div>
             </div>""", unsafe_allow_html=True)
 
